@@ -7,4 +7,4 @@ This project organizes 26 water polo game videos (important events are extracted
 # DATA ORGANIZATION
 
 - function.ipynb contains main functions used for data organization
-- Basically function.ipynb takes inputs (game_code, clip) and create image view videos with bouding boxes around players and ball. Users can choose to include trajectory in the videos. Overhead view videos of games are also provided in another function. Users can choose to only create image view, only overhead view, or side-by-side view of two videos.
+- Basically function.ipynb takes inputs (game_code, clip, option) and create image view videos with bouding boxes around players and ball. Users can choose to include trajectory in the videos. Overhead view videos of games are also provided in another function. Users can choose to only create image view, only overhead view, or side-by-side view of two videos.
