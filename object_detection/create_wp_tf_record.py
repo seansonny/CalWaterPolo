@@ -15,7 +15,7 @@
 
 """================================================================
 Example usage:
-python /Users/sswpro/Documents/Calwaterpolo/tfrecord/create_wp_tf_record.py --game_name=20180127_CHNvCAL
+python /Users/sswpro/Documents/object_detection/tfrecord/create_wp_tf_record.py
 
 -----------------------------------------------------------------
 In the project we need clips in "clips" folder, json files in "composite_jsons" folder 
@@ -23,22 +23,19 @@ and wp_label_map.pbtxt with create_wp_tf_record.py.
 
   EX)
   ## clips
-  /Users/sswpro/Documents/Calwaterpolo/tfrecord/clips/20180127_CHNvCAL
+  /Users/sswpro/Documents/object_detection/tfrecord/clips/20180127_CHNvCAL
 
   ## jsons
-  /Users/sswpro/Documents/Calwaterpolo/tfrecord/composite_jsons/20180127_CHNvCAL
+  /Users/sswpro/Documents/object_detection/tfrecord/composite_jsons/20180127_CHNvCAL
 
   ## label_map
-  /Users/sswpro/Documents/Calwaterpolo/tfrecord/wp_label_map.pbtxt
+  /Users/sswpro/Documents/object_detection/tfrecord/wp_label_map.pbtxt
 
 ================================================================
-#game_name
-EX) 20180127_CHNvCAL
-
 ================================================================
 ================================================================
 #output tfrecord dir
-/Users/sswpro/Documents/Calwaterpolo/tfrecord/output/20180127_CHNvCAL
+/Users/sswpro/Documents/object_detection/tfrecord/output/
 """
 
 import tensorflow as tf
@@ -49,7 +46,7 @@ import hashlib
 
 import PIL.Image
 from os import getcwd, listdir, makedirs
-from os.path import isfile, join, exists
+from os.path import isfile, join, exists, isdir
 
 from object_detection.utils import dataset_util
 from object_detection.utils import label_map_util
@@ -57,7 +54,8 @@ from object_detection.utils import label_map_util
 
 flags = tf.app.flags
 flags.DEFINE_string('proj_dir', '', 'Path to the project that has clips,jsons and label_map')
-flags.DEFINE_string('game_name', '', 'Name of the wp game')
+
+# flags.DEFINE_string('game_name', '', 'Name of the wp game')
 # flags.DEFINE_string('output_path', '', 'Path to output TFRecord')
 FLAGS = flags.FLAGS
 
@@ -66,10 +64,12 @@ def split_dataset(clip_path):
   random.seed(49)
   random.shuffle(image_files)
   num_images = len(image_files)
-  num_train = int(0.7 * num_images)
+  num_train = int(0.1 * num_images)
   train_clips = image_files[:num_train]
-  eval_clips =  image_files[num_train:]
-  return train_clips, eval_clips
+  rest =  image_files[num_train:]
+  num_eval = int(0.05 * num_images)
+  eval_clips = rest[:num_eval]
+  return train_clips, eval_clips, num_train, num_eval
 
 def file_name_padding(filename):
   num_padding = '0000'
@@ -84,6 +84,8 @@ def dict_to_tf_example(data, detections, label_map_dict, clip_directory):
   width = data['width'] # Image width
   filename = file_name_padding(data['image_file']) # Filename of the image. Empty if image is not from file
   img_path = join(clip_directory, filename)
+  if not isfile(img_path):
+    return
 
   with tf.gfile.GFile(img_path, 'rb') as fid:
     encoded_image_data = fid.read() # Encoded image bytes
@@ -106,10 +108,10 @@ def dict_to_tf_example(data, detections, label_map_dict, clip_directory):
   classes = [] # List of integer class id of bounding box (1 per box)
 
   for detection in detections:
-    xmins.append(detection['bounding_box'][0]) #division by width?
-    xmaxs.append(detection['bounding_box'][1]) #division by height?
-    ymins.append(detection['bounding_box'][2]) #division by width?
-    ymaxs.append(detection['bounding_box'][3]) #division by height?
+    xmins.append(detection['bounding_box'][0]/width) 
+    xmaxs.append(detection['bounding_box'][1]/height)
+    ymins.append(detection['bounding_box'][2]/width)
+    ymaxs.append(detection['bounding_box'][3]/height)
     class_num = detection['class']
     classes.append(class_num)
     for key in label_map_dict.keys():
@@ -135,8 +137,8 @@ def dict_to_tf_example(data, detections, label_map_dict, clip_directory):
   }))
   return tf_example
 
-def create_tf_record(output_filename, label_map_dict, 
-      json_path, clip_path, clips):
+def create_tf_record(train_output_filename, eval_output_filename, proj_dir):
+      # json_path, clip_path, clips):
   """Creates a TFRecord file from clips.
 
   Args:
@@ -146,10 +148,40 @@ def create_tf_record(output_filename, label_map_dict,
     clip_path: Path to image files are stored.
     clips: clips to parse and save to tf record.
   """
-  writer = tf.python_io.TFRecordWriter(output_filename)
-  with open(json_path) as f:
-    data = json.load(f)
+  clip_dir = join(proj_dir, 'clips')
+  game_names = listdir(clip_dir)
 
+  train_writer = tf.python_io.TFRecordWriter(train_output_filename)
+  eval_writer = tf.python_io.TFRecordWriter(eval_output_filename)
+  total_num_train, total_num_eval = 0, 0
+  for game_name in game_names:
+    json_dir = join(proj_dir, 'composite_jsons', game_name)
+    if not isdir(json_dir):
+      continue
+    image_dir = join(proj_dir, 'clips', game_name)
+    label_map_dir = join(proj_dir, 'wp_label_map.pbtxt')
+    label_map_dict = label_map_util.get_label_map_dict(label_map_dir)
+    
+    json_files = [file for file in listdir(json_dir) if isfile(join(json_dir, file))]
+
+    for json_file in json_files:
+      clip_num = json_file.split('.')[0]
+      clip_path = join(image_dir ,clip_num)
+      json_path = join(json_dir, json_file)
+      train_clips, eval_clips, num_train, num_eval = split_dataset(clip_path)
+      total_num_train += num_train
+      total_num_eval += num_eval
+      with open(json_path) as f:
+        data = json.load(f)
+      tf_example_writer(train_writer, train_clips, data, label_map_dict, clip_path)
+      tf_example_writer(eval_writer, eval_clips, data, label_map_dict, clip_path)
+
+  train_writer.close()
+  eval_writer.close()
+  print("total_num_train: ", total_num_train)
+  print("total_num_eval: ", total_num_eval)
+  
+def tf_example_writer(writer, clips, data, label_map_dict, clip_path):
   for clip in clips:
     clip_name = clip.split('.')[0]
     uclip = unicode(clip_name, "utf-8")
@@ -157,46 +189,19 @@ def create_tf_record(output_filename, label_map_dict,
     if not detections:
       continue
     tf_example = dict_to_tf_example(data, detections, label_map_dict, clip_path)
+    if not tf_example:
+      return
     writer.write(tf_example.SerializeToString())
 
-  writer.close()
-
 def main(_):
-  # writer = tf.python_io.TFRecordWriter(FLAGS.output_path)
-  # TODO(user): Write code to read in your dataset to tf_examples variable
-  
-  # for example in examples:
-  #   tf_example = create_tf_example(example)
-  #   writer.write(tf_example.SerializeToString())
-  # writer.close()
-
   proj_dir = getcwd()
-  game_name = FLAGS.game_name
-
-  image_dir = join(proj_dir, 'clips', game_name)
-  json_dir = join(proj_dir, 'composite_jsons', game_name)
-  label_map_dir = join(proj_dir, 'wp_label_map.pbtxt')
-  label_map_dict = label_map_util.get_label_map_dict(label_map_dir)
   output_dir = join(proj_dir, 'output')
-
   if not exists(output_dir):
     makedirs(output_dir)
 
-  json_files = [file for file in listdir(json_dir) if isfile(join(json_dir, file))]
-  for json_file in json_files:
-    clip_num = json_file.split('.')[0]
-    clip_path = join(image_dir ,clip_num)
-    json_path = join(json_dir, json_file)
-
-    train_output_name = join(output_dir, 'wp_train.record')
-    eval_output_name = join(output_dir, 'wp_eval.record')
-
-    train_clips, eval_clips = split_dataset(clip_path)
-
-    create_tf_record(train_output_name, label_map_dict, 
-      json_path, clip_path, train_clips)
-    create_tf_record(eval_output_name, label_map_dict, 
-      json_path, clip_path, eval_clips)
+  train_output_name = join(output_dir, 'wp_train.record')
+  eval_output_name = join(output_dir, 'wp_eval.record')
+  create_tf_record(train_output_name, eval_output_name, proj_dir)
 
 if __name__ == '__main__':
   tf.app.run()
